@@ -83,8 +83,6 @@ static void unveil_k2_from_dice(const uint8_t d[5], uint8_t k2[32]) {
 
 // Check anti-debug/anti-VM
 static int check_security(void) {
-    // Allow override
-    if (getenv("CTF_ALLOW_DEBUG")) return 1;
     if (k2_unlocked || decrypt_success) return 1;
 
     // Check ptrace
