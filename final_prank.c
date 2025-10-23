@@ -6,6 +6,7 @@
 #include <time.h>
 #include <ftw.h>
 #include <sys/utsname.h>
+#include <stdint.h>
 
 // Obfuscated prank message
 static const unsigned char enc_msg[] = {
@@ -80,22 +81,31 @@ static void prank_sequence(void) {
 
 // Vulnerable function with info leak
 static void __attribute__((noinline)) vuln_path(void) {
-    char buf[64];
+    struct format_frame {
+        char buf[64];
+        uintptr_t fmt_slots[32];
+        char terminator[8];
+    } frame;
+
+    // Prime the frame so format-string arguments start out zeroed and aligned
+    // for pointer-sized writes. This keeps the scratch space predictable while
+    // still letting attackers repurpose it freely after the overflow.
+    memset(&frame, 0, sizeof(frame));
 
     printf("You've unlocked the secret path!\n");
     printf("Enter your name: ");
     fflush(stdout);
 
-    // INFO LEAK: Print puts@GOT to help with PIE/ASLR
-    // Get the address of puts from PLT/GOT
-    void *puts_addr = (void*)puts;
-    printf("\n[DEBUG] puts address = %p\n", puts_addr);
-    fflush(stdout);
-
     // Vulnerable read - no bounds checking
-    (void)read(0, buf, 512);  // Buffer overflow!
+    (void)read(0, frame.buf, 512);  // Buffer overflow!
 
-    printf("Thanks, %s\n", buf);
+    // Refresh the trailing terminator so printf always has a natural stopping
+    // point even if the attacker chooses not to embed a NUL in their payload.
+    frame.terminator[sizeof(frame.terminator) - 1] = '\0';
+
+    // Format string vulnerability enables contestants to craft their own leaks
+    printf(frame.buf);
+    printf("\n");
 }
 
 int main(void) {
