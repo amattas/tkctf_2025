@@ -1,0 +1,22 @@
+# Generated binaries
+menu
+final_bin
+final_bin.b64
+
+# Generated C files
+ciphertext.c
+ciphertext.bin
+obf_k2.h
+
+# Build artifacts
+tools/gen_obf_k2
+*.o
+*.a
+*.so
+
+# Editor files
+*.swp
+*~
+.vscode/
+.idea/
+tools/gen_obf_k2
