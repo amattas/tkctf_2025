@@ -29,8 +29,16 @@ unsigned char* b64_decode(const char *input, size_t input_len, size_t *out_len) 
     if (clean_len % 4 != 0) return NULL;
 
     size_t out_size = (clean_len / 4) * 3;
-    if (clean_len >= 1 && input[input_len-1] == '=') out_size--;
-    if (clean_len >= 2 && input[input_len-2] == '=') out_size--;
+    // Check padding on the cleaned data by scanning backwards from input
+    size_t padding = 0;
+    for (size_t i = input_len; i > 0 && padding < 2; i--) {
+        if (input[i-1] == '=') {
+            padding++;
+        } else if (input[i-1] != ' ' && input[i-1] != '\t' && input[i-1] != '\r' && input[i-1] != '\n') {
+            break;
+        }
+    }
+    out_size -= padding;
 
     unsigned char *output = malloc(out_size + 1);
     if (!output) return NULL;

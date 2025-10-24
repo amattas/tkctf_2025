@@ -387,12 +387,20 @@ static void decrypt_and_exec(void) {
         return;
     }
 
-    if (!(k1_generated && k1_hex[0] == '\0') &&
-        (!hex_to_bytes(k1_hex, generated_k1, 32) || strlen(k1_hex) != 64)) {
-        printf("Invalid Key 1.\n");
-        return;
+    // If user pressed Enter and we have a generated key, use it
+    if (k1_generated && k1_hex[0] == '\0') {
+        // Use existing generated_k1, do nothing
+    } else {
+        // User provided input - validate and parse to temporary buffer
+        uint8_t temp_k1[32];
+        if (strlen(k1_hex) != 64 || !hex_to_bytes(k1_hex, temp_k1, 32)) {
+            printf("Invalid Key 1 (must be 64 hex characters).\n");
+            return;
+        }
+        // Valid input - copy to generated_k1
+        memcpy(generated_k1, temp_k1, 32);
+        k1_generated = 1;
     }
-    k1_generated = 1;
 
     printf("Enter Key 2: ");
     char k2_hex[128];

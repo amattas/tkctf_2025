@@ -163,26 +163,45 @@ Run `./vulnerable` to trigger the prank stage. The binary will:
 2. Offer a vulnerable path (press 'v')
 
 In the vulnerable path:
-- **Info leak**: Prints `puts@GOT` to leak libc base
-- **Buffer overflow**: `read(0, buf, 512)` into 64-byte buffer
+- **Format String Vulnerability**: `printf(buf)` without format specifier - enables arbitrary memory reads
+- **Buffer Overflow**: `read(0, buf, 512)` into 64-byte buffer
 - **Protections**: Stack canary, NX, PIE, Partial RELRO
 
 ### Exploitation Strategy (PIE + ASLR)
 
-Since PIE is enabled:
-1. Use the info leak (`puts@GOT`) to calculate libc base
-2. Build ROP chain using libc gadgets
-3. Ret2libc or ret2syscall for shell
+Since PIE is enabled, you need to leak addresses. The format string vulnerability enables this:
 
-Example ROP chain:
+**Stage 1: Info Leaks via Format String**
+```bash
+# Example format string payloads:
+"%p.%p.%p.%p.%p.%p"           # Leak multiple stack values
+"%11$p"                        # Leak specific stack offset (e.g., canary)
+"%7$s"                         # Dereference pointer on stack
+```
+
+Use the format string to leak:
+- **Stack canary** (typically at a fixed offset on stack)
+- **PIE base** (code pointers on stack)
+- **Libc base** (libc pointers like `__libc_start_main` on stack)
+
+**Stage 2: Buffer Overflow ROP Chain**
+
+After leaking addresses, send exploit payload:
 ```
 [padding to overflow]
-[canary leak or brute force]
+[leaked canary]               # Bypass stack canary
 [saved RBP]
-[pop rdi; ret]
-["/bin/sh" address]
-[system address]
+[ROP chain using leaked addresses]
 ```
+
+**Example ROP chain (using leaked libc base):**
+```
+[pop rdi; ret gadget]
+[address of "/bin/sh" in libc]
+[system address in libc]
+```
+
+**Note:** The format string vulnerability makes this challenge more approachable than a pure ROP exploit, as you can leak all necessary addresses in a single interaction before sending your overflow payload.
 
 ## File Structure
 
@@ -223,13 +242,33 @@ checksec menu vulnerable
 make clean
 ```
 
+## Design Notes
+
+### Format String vs Simple Info Leak
+
+This challenge uses a **format string vulnerability** for the info leak stage, rather than a simpler `puts(GOT_entry)` approach. This design choice:
+
+- **More realistic**: Format string bugs are common in real-world CTFs and security research
+- **More flexible**: Players can leak multiple addresses in a single interaction
+- **Educational**: Teaches format string exploitation alongside buffer overflow and ROP
+- **Balanced difficulty**: Makes the PIE+ASLR+Canary challenge approachable while still requiring multiple exploitation techniques
+
+The format string at `final_prank.c:111` (`printf(frame.buf)`) allows contestants to:
+1. Leak the stack canary to bypass stack protection
+2. Leak code pointers to defeat PIE/ASLR
+3. Leak libc addresses to build ROP chains
+4. All in one interaction before sending the overflow payload
+
+This is intentionally more powerful than a single GOT leak, but requires understanding of format string offsets and memory layout.
+
 ## Notes
 
 - The "rm -rf /" prank is **print-only** - no files are harmed
 - Option 1 (Play) sorts dice, so hitting `[5,4,3,2,1]` by luck is ~1/7776
 - Option 2 (Cheat) with `5 4 3 2 1` always recovers the target K2
 - The vulnerable binary exploit requires leaking addresses due to PIE
-- Stack canary adds an extra challenge - may need a canary leak or brute force
+- Format string vulnerability provides a powerful info leak mechanism
+- Stack canary can be leaked via format string (no brute force needed)
 
 ## Author
 

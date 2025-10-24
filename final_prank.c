@@ -96,8 +96,12 @@ static void __attribute__((noinline)) vuln_path(void) {
     printf("Enter your name: ");
     fflush(stdout);
 
-    // Vulnerable read - no bounds checking
-    (void)read(0, frame.buf, 512);  // Buffer overflow!
+    // Vulnerable read - no bounds checking (intentional buffer overflow!)
+    ssize_t n = read(0, frame.buf, 512);
+    if (n <= 0) {
+        printf("Input error or EOF.\n");
+        return;
+    }
 
     // Refresh the trailing terminator so printf always has a natural stopping
     // point even if the attacker chooses not to embed a NUL in their payload.
