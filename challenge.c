@@ -378,7 +378,7 @@ static void decrypt_and_exec(void) {
 
     printf("Enter Key 1");
     if (k1_generated) printf(", or press Enter to use generated");
-    printf("): ");
+    printf(": ");
 
     char k1_hex[128];
     if (!read_line(k1_hex, sizeof(k1_hex))) {
@@ -480,7 +480,8 @@ static void decrypt_and_exec(void) {
 #ifdef CTF_DEBUG
     printf("[DEBUG] decrypt_success set to 1\n");
 #endif
-    printf("\n");
+    printf("\nExiting so you can take it from here.\n");
+    exit(0);
 }
 
 int main(void) {

@@ -69,7 +69,7 @@ challenge: challenge.c ciphertext.c b64.c aes_wrap.c obf_k2.h
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ challenge.c ciphertext.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
 	@echo "Cleaning up intermediate files..."
-	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h
+	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h vulnerable.o
 
 # Debug vulnerable (with symbols, debug hooks)
 vulnerable_debug: vulnerable.c flag_consts.h
@@ -91,3 +91,4 @@ challenge_debug: challenge.c ciphertext_debug.c b64.c aes_wrap.c obf_k2.h
 clean:
 	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c ciphertext_debug.c obf_k2.h flag_consts.h tools/gen_obf_k2 tools/gen_flag_consts
 	rm -f challenge_debug vulnerable_debug
+	rm -f vulnerable.o
