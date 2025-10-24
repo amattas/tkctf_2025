@@ -173,12 +173,9 @@ static void report_k2_result(const uint8_t dice[5], const uint8_t k2[32], const 
         printf("\n");
         k2_unlocked = 1;
     } else {
-        printf("\n[debug] Derived K2 (hex): ");
-        print_hex(k2, 32);
         printf("\n");
         printf("\n%s\n", failure_msg);
     }
-
     printf("\n");
 }
 
@@ -200,7 +197,7 @@ static int check_security(void) {
                     int pid = 0;
                     if (sscanf(line + 10, "%d", &pid) == 1 && pid != 0) {
                         fclose(f);
-                        fprintf(stderr, "[!] Debugger detected (TracerPid)\n");
+                        fprintf(stderr, "!!! Debugger detected (TracerPid)\n");
                         return 0;
                     }
                     break;
@@ -212,7 +209,7 @@ static int check_security(void) {
         errno = 0;
         if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
             if (errno == EPERM || errno == EBUSY || errno == EINVAL) {
-                fprintf(stderr, "[!] Debugger detected (ptrace)\n");
+                fprintf(stderr, "!!! Debugger detected (ptrace)\n");
                 return 0;
             }
         } else {
@@ -224,7 +221,7 @@ static int check_security(void) {
     const char *ld_vars[] = {"LD_PRELOAD", "LD_AUDIT", "LD_DEBUG", NULL};
     for (int i = 0; ld_vars[i]; i++) {
         if (getenv(ld_vars[i])) {
-            fprintf(stderr, "[!] LD variable detected: %s\n", ld_vars[i]);
+            fprintf(stderr, "!!! LD variable detected: %s\n", ld_vars[i]);
             unsetenv(ld_vars[i]);
         }
     }
@@ -353,7 +350,7 @@ static void cheat_mode(void) {
 
 // Generate weak K1
 static void generate_k1(void) {
-    printf("\n=== Generate K1 ===\n");
+    printf("\n=== Generate Key ===\n");
 
     // 5-byte pattern: [0xAB, 0xCB, 0xCD, 0xEF, DIGIT]
     // where DIGIT is random 1-6
@@ -371,17 +368,16 @@ static void generate_k1(void) {
     // Ensure exactly 32 bytes
     k1_generated = 1;
 
-    printf("Generated K1 (hex): ");
+    printf("Generated Key: ");
     print_hex(generated_k1, 32);
     printf("\n");
-    printf("(Pattern: AB CB CD EF [1-6] repeating)\n\n");
 }
 
 // Decrypt and execute final binary
 static void decrypt_and_exec(void) {
-    printf("\n=== Decrypt Final Binary ===\n");
+    printf("\n=== Decrypt Payload ===\n");
 
-    printf("Enter K1 (64 hex chars");
+    printf("Enter Key 1");
     if (k1_generated) printf(", or press Enter to use generated");
     printf("): ");
 
@@ -393,12 +389,12 @@ static void decrypt_and_exec(void) {
 
     if (!(k1_generated && k1_hex[0] == '\0') &&
         (!hex_to_bytes(k1_hex, generated_k1, 32) || strlen(k1_hex) != 64)) {
-        printf("Invalid K1 hex string.\n");
+        printf("Invalid Key 1.\n");
         return;
     }
     k1_generated = 1;
 
-    printf("Enter K2 (64 hex chars): ");
+    printf("Enter Key 2: ");
     char k2_hex[128];
     if (!read_line(k2_hex, sizeof(k2_hex))) {
         printf("\nInput aborted.\n");
@@ -407,7 +403,7 @@ static void decrypt_and_exec(void) {
 
     uint8_t k2[32];
     if (strlen(k2_hex) != 64 || !hex_to_bytes(k2_hex, k2, 32)) {
-        printf("Invalid K2 hex string.\n");
+        printf("Invalid Key 2.\n");
         return;
     }
 
@@ -417,7 +413,7 @@ static void decrypt_and_exec(void) {
     size_t stage1_len;
     unsigned char *stage1 = aes_decrypt(ciphertext, ciphertext_len, k2, IV, &stage1_len);
     if (!stage1) {
-        printf("Decryption failed (K2 stage: wrong K2 or corrupt ciphertext).\n");
+        printf("Decryption failed (Key 2 stage).\n");
         return;
     }
 
@@ -426,7 +422,7 @@ static void decrypt_and_exec(void) {
     unsigned char *stage2 = aes_decrypt(stage1, stage1_len, generated_k1, IV, &stage2_len);
     free(stage1);
     if (!stage2) {
-        printf("Decryption failed (K1 stage: wrong K1).\n");
+        printf("Decryption failed (Key 1 stage).\n");
         return;
     }
 
@@ -435,7 +431,7 @@ static void decrypt_and_exec(void) {
     unsigned char *vulnerable_blob = b64_decode((char*)stage2, stage2_len, &final_len);
     free(stage2);
     if (!vulnerable_blob) {
-        printf("Decryption failed (K1 stage: invalid payload after K1 decrypt).\n");
+        printf("Decryption failed (Key 1 stage).\n");
         return;
     }
 
@@ -481,10 +477,10 @@ int main(void) {
             printf("\nGoodbye!\n");
             return 0;
         }
-        printf("1) Play game (Yahtzee)\n");
-        printf("2) Cheat (manual dice)\n");
+        printf("1) Play a game\n");
+        printf("2) Cheat\n");
         printf("3) Generate a Key\n");
-        printf("4) Decrypt final binary\n");
+        printf("4) Decrypt payload\n");
         printf("5) Exit\n");
         printf("\nChoice: ");
         fflush(stdout);
