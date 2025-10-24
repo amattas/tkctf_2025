@@ -9,9 +9,17 @@ K2_HEX := 4d387f7065e6224dc3c739bc0dfcb7caaab7bb49fd77ad52ff247b27356b2760
 IV0_HEX := 00000000000000000000000000000000
 TARGET_DICE := 54321
 
-.PHONY: all clean
+.PHONY: all clean debug
 
 all: challenge
+
+# Debug builds (not stripped, with debug macros)
+debug: challenge_debug vulnerable_debug
+	@echo ""
+	@echo "=== Debug builds complete ==="
+	@echo "challenge_debug: includes verbose logging"
+	@echo "vulnerable_debug: TEST_FLAG_REVEAL=1 to call reveal_flag()"
+	@echo ""
 
 # Build obfuscation generator
 tools/gen_obf_k2: tools/gen_obf_k2.c
@@ -63,5 +71,23 @@ challenge: challenge.c ciphertext.c b64.c aes_wrap.c obf_k2.h
 	@echo "Cleaning up intermediate files..."
 	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h
 
+# Debug vulnerable (with symbols, debug hooks)
+vulnerable_debug: vulnerable.c flag_consts.h
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -DFLAG_REVEAL_ENABLED -DCTF_DEBUG -g -o $@ $< -lcrypto
+
+# Debug challenge (with symbols, verbose output)
+ciphertext_debug.c: ciphertext.bin
+	@echo '#include <stddef.h>' > $@
+	@echo '__attribute__((section(".uh_oh")))' >> $@
+	@echo 'const unsigned char ciphertext[] = {' >> $@
+	@python3 tools/bin2c.py < $< | sed 's/^/  /' >> $@
+	@echo '' >> $@
+	@echo '};' >> $@
+	@echo 'const size_t ciphertext_len = sizeof(ciphertext);' >> $@
+
+challenge_debug: challenge.c ciphertext_debug.c b64.c aes_wrap.c obf_k2.h
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -DCTF_DEBUG -g -o $@ challenge.c ciphertext_debug.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
+
 clean:
-	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h tools/gen_obf_k2 tools/gen_flag_consts
+	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c ciphertext_debug.c obf_k2.h flag_consts.h tools/gen_obf_k2 tools/gen_flag_consts
+	rm -f challenge_debug vulnerable_debug

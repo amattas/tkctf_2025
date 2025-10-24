@@ -16,11 +16,36 @@ make all
 ```
 
 This will:
+- Generate flag constants with trapdoor VDF (~1-2 minutes)
 - Compile `vulnerable` with PIE, partial RELRO, stack canary, and NX
 - Base64 encode the binary
 - Double-encrypt it with K1 (weak pattern key) then K2 (Yahtzee-derived key)
 - Generate `obf_k2.h` with obfuscated K2
-- Compile `menu` with all dependencies
+- Compile `challenge` with all dependencies
+
+### Debug Builds
+
+For development and troubleshooting:
+
+```bash
+make debug
+```
+
+This creates **non-stripped** debug binaries with verbose logging:
+
+- **`challenge_debug`**: Includes `[DEBUG]` output showing:
+  - Dice values and hash comparisons
+  - Key values (first 16 hex)
+  - Decryption stage sizes
+  - Security bypass status
+
+- **`vulnerable_debug`**: Includes test hook:
+  ```bash
+  TEST_FLAG_REVEAL=1 ./vulnerable_debug
+  ```
+  This directly calls `reveal_flag()` to verify the VDF-based flag decryption works.
+
+**Note**: Debug builds are **NOT** included in `make all` and must be built separately. Production binaries never include debug code.
 
 ## Binary Protections
 
@@ -273,3 +298,26 @@ This is intentionally more powerful than a single GOT leak, but requires underst
 ## Author
 
 Generated for CTF challenges. Educational purposes only.
+
+
+## Make Targets Quick Reference
+
+```bash
+make all        # Build production binaries (challenge)
+make debug      # Build debug binaries with verbose logging
+make clean      # Remove all build artifacts
+```
+
+### Debug Features
+
+**challenge_debug**:
+- Shows dice/hash comparisons
+- Prints key prefixes  
+- Displays decryption stages
+- Not stripped, includes symbols
+
+**vulnerable_debug**:
+- `TEST_FLAG_REVEAL=1` hook to call reveal_flag()
+- Not stripped, includes symbols
+- Useful for verifying VDF implementation
+

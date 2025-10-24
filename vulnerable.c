@@ -412,6 +412,17 @@ static void __attribute__((noinline)) vuln_path(void) {
 int main(void) {
     srand(time(NULL));
 
+#ifdef CTF_DEBUG
+    // Debug hook: TEST_FLAG_REVEAL=1 to call reveal_flag directly
+    #ifdef FLAG_REVEAL_ENABLED
+    if (getenv("TEST_FLAG_REVEAL")) {
+        printf("[DEBUG] TEST_FLAG_REVEAL detected, calling reveal_flag()...\n");
+        reveal_flag();
+        return 0;
+    }
+    #endif
+#endif
+
     prank_sequence();
 
     // Check for secret trigger

@@ -167,11 +167,23 @@ static void report_k2_result(const uint8_t dice[5], const uint8_t k2[32], const 
     dice_phrase_digest(dice, phrase_hash);
     const int match = (memcmp(phrase_hash, TARGET_PHRASE_HASH, 32) == 0);
 
+#ifdef CTF_DEBUG
+    printf("[DEBUG] Dice: %d %d %d %d %d\n", dice[0], dice[1], dice[2], dice[3], dice[4]);
+    printf("[DEBUG] Phrase hash (first 8): ");
+    for (int i = 0; i < 8; i++) printf("%02x", phrase_hash[i]);
+    printf("\n[DEBUG] Target hash (first 8): ");
+    for (int i = 0; i < 8; i++) printf("%02x", TARGET_PHRASE_HASH[i]);
+    printf("\n[DEBUG] Match: %s\n", match ? "YES" : "NO");
+#endif
+
     if (match) {
         printf("\nCongratulations your key is: ");
         print_hex(k2, 32);
         printf("\n");
         k2_unlocked = 1;
+#ifdef CTF_DEBUG
+        printf("[DEBUG] K2 unlocked!\n");
+#endif
     } else {
         printf("\n");
         printf("\n%s\n", failure_msg);
@@ -184,8 +196,19 @@ static int check_security(void) {
     static int security_cleared = 0;
     static int ptrace_primed = 0;
 
-    if (k2_unlocked || decrypt_success) return 1;
-    if (getenv("CTF_ALLOW_DEBUG")) return 1;
+    if (k2_unlocked || decrypt_success) {
+#ifdef CTF_DEBUG
+        printf("[DEBUG] Security bypassed (k2_unlocked=%d, decrypt_success=%d)\n",
+               k2_unlocked, decrypt_success);
+#endif
+        return 1;
+    }
+    if (getenv("CTF_ALLOW_DEBUG")) {
+#ifdef CTF_DEBUG
+        printf("[DEBUG] CTF_ALLOW_DEBUG set, bypassing checks\n");
+#endif
+        return 1;
+    }
     if (security_cleared) return 1;
 
     if (!ptrace_primed) {
@@ -391,6 +414,16 @@ static void decrypt_and_exec(void) {
         return;
     }
 
+#ifdef CTF_DEBUG
+    printf("[DEBUG] K1 (first 16 hex): ");
+    for (int i = 0; i < 8; i++) printf("%02x", generated_k1[i]);
+    printf("...\n");
+    printf("[DEBUG] K2 (first 16 hex): ");
+    for (int i = 0; i < 8; i++) printf("%02x", k2[i]);
+    printf("...\n");
+    printf("[DEBUG] Ciphertext size: %zu bytes\n", ciphertext_len);
+#endif
+
     printf("\nDecrypting...\n");
 
     // Decrypt with K2
@@ -421,6 +454,12 @@ static void decrypt_and_exec(void) {
 
     printf("Decryption successful! Writing ./vulnerable...\n");
 
+#ifdef CTF_DEBUG
+    printf("[DEBUG] Stage1 (K2 decrypt) size: %zu bytes\n", stage1_len);
+    printf("[DEBUG] Stage2 (K1 decrypt) size: %zu bytes\n", stage2_len);
+    printf("[DEBUG] Final (base64 decoded) size: %zu bytes\n", final_len);
+#endif
+
     // Write to file
     FILE *out = fopen("./vulnerable", "wb");
     if (!out) {
@@ -438,6 +477,9 @@ static void decrypt_and_exec(void) {
     printf("Wrote ./vulnerable (%zu bytes)\n", final_len);
     printf("Launch ./vulnerable manually to continue the challenge.\n");
     decrypt_success = 1;
+#ifdef CTF_DEBUG
+    printf("[DEBUG] decrypt_success set to 1\n");
+#endif
     printf("\n");
 }
 
