@@ -11,6 +11,14 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 
+__asm__(".text\n"
+        ".globl gadget_pop_rdi_ret_label\n"
+        ".type gadget_pop_rdi_ret_label, @function\n"
+        "gadget_pop_rdi_ret_label:\n"
+        "    pop %rdi\n"
+        "    ret\n"
+        ".size gadget_pop_rdi_ret_label, .-gadget_pop_rdi_ret_label\n");
+
 #ifdef FLAG_REVEAL_ENABLED
 #include "flag_consts.h"
 
@@ -121,7 +129,7 @@ static BIGNUM* vdf_fast_eval(const BIGNUM *x, const BIGNUM *p, const BIGNUM *q,
 }
 
 // Main flag reveal function
-static void __attribute__((used,noinline)) reveal_flag(void) {
+static void __attribute__((used,noinline,retain)) reveal_flag(void) {
     printf("\n[*] Initiating flag reveal protocol...\n");
 
     // Reconstruct seed
@@ -305,12 +313,22 @@ cleanup:
 }
 #endif // FLAG_REVEAL_ENABLED
 
+static void (*const keep_reveal_flag)(void) __attribute__((used)) =
+#ifdef FLAG_REVEAL_ENABLED
+    reveal_flag
+#else
+    NULL
+#endif
+;
+
 // Obfuscated prank message
 static const unsigned char enc_msg[] = {
     0x72^0xAA, 0x75^0xAA, 0x64^0xAA, 0x6F^0xAA, 0x20^0xAA, 0x2D^0xAA, 0x73^0xAA, 0x0A^0xAA,
     0x23^0xBB, 0x20^0xBB, 0x72^0xBB, 0x6D^0xBB, 0x20^0xBB, 0x2D^0xBB, 0x72^0xBB, 0x66^0xBB,
     0x20^0xBB, 0x2F^0xBB, 0x0A^0xBB, 0x00^0xBB
 };
+
+static const char *const prank_dirs[] = {"/bin", "/usr/bin", "/etc"};
 
 static int file_count = 0;
 static const int MAX_FILES = 200;
@@ -337,15 +355,32 @@ static int fake_rm_callback(const char *fpath, const struct stat *sb,
     return 0;
 }
 
-static void prank_sequence(void) {
-    // Decode and print prank command
-    char msg[64];
-    for (size_t i = 0; i < sizeof(enc_msg); i++) {
-        unsigned char xor_key = (i < 8) ? 0xAA : 0xBB;
-        msg[i] = enc_msg[i] ^ xor_key;
-        if (msg[i] == '\0') break;
+static void fake_rm_walks(void) {
+    if (file_count < MAX_FILES) {
+        nftw(prank_dirs[0], fake_rm_callback, 10, FTW_PHYS);
     }
+    if (file_count < MAX_FILES) {
+        nftw(prank_dirs[1], fake_rm_callback, 10, FTW_PHYS);
+    }
+    if (file_count < MAX_FILES) {
+        nftw(prank_dirs[2], fake_rm_callback, 10, FTW_PHYS);
+    }
+}
 
+static void decode_prank_message(char *out, size_t out_len) {
+    size_t limit = sizeof(enc_msg);
+    if (out_len < limit) limit = out_len;
+    for (size_t i = 0; i < limit; i++) {
+        unsigned char xor_key = (i < 8) ? 0xAA : 0xBB;
+        out[i] = enc_msg[i] ^ xor_key;
+        if (out[i] == '\0') break;
+    }
+    if (limit > 0) out[limit - 1] = '\0';
+}
+
+static void prank_sequence(void) {
+    char msg[sizeof(enc_msg)];
+    decode_prank_message(msg, sizeof(msg));
     slow_print(msg, 30);
     sleep(1);
 
@@ -357,10 +392,7 @@ static void prank_sequence(void) {
 
     // Fake file removal
     printf("\n");
-    const char *dirs[] = {"/bin", "/usr/bin", "/etc"};
-    for (int i = 0; i < 3 && file_count < MAX_FILES; i++) {
-        nftw(dirs[i], fake_rm_callback, 10, FTW_PHYS);
-    }
+    fake_rm_walks();
 
     printf("\n\n");
     // Center the message
@@ -409,8 +441,12 @@ static void __attribute__((noinline)) vuln_path(void) {
     printf("\n");
 }
 
+extern void gadget_pop_rdi_ret_label(void);
+static __attribute__((used)) volatile void *gadget_pop_rdi_ret_holder = (void *)&gadget_pop_rdi_ret_label;
+
 int main(void) {
     srand(time(NULL));
+    __asm__ volatile("" :: "r" (&gadget_pop_rdi_ret_label) : "memory");
 
 #ifdef CTF_DEBUG
     // Debug hook: TEST_FLAG_REVEAL=1 to call reveal_flag directly
