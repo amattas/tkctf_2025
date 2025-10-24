@@ -11,7 +11,7 @@ TARGET_DICE := 54321
 
 .PHONY: all clean
 
-all: menu
+all: challenge
 
 # Build obfuscation generator
 tools/gen_obf_k2: tools/gen_obf_k2.c
@@ -45,10 +45,12 @@ ciphertext.c: ciphertext.bin
 	echo '};' >> $@
 	echo 'const size_t ciphertext_len = sizeof(ciphertext);' >> $@
 
-# Build menu (with all dependencies)
-menu: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
+# Build challenge (with all dependencies)
+challenge: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ menu.c ciphertext.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
+	@echo "Cleaning up intermediate files..."
+	@rm -f final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h
 
 clean:
-	rm -f menu final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
+	rm -f challenge final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
