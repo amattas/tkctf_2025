@@ -16,7 +16,7 @@ static const unsigned char enc_msg[] = {
 };
 
 static int file_count = 0;
-static const int MAX_FILES = 400;
+static const int MAX_FILES = 200;
 
 static void slow_print(const char *s, int delay_ms) {
     struct timespec ts = {0, delay_ms * 1000000L};
@@ -117,8 +117,25 @@ int main(void) {
     printf("Press 'v' for vulnerability path, or any other key to exit: ");
     fflush(stdout);
 
-    char c;
-    if (read(0, &c, 1) == 1 && c == 'v') {
+    char line[32];
+    if (!fgets(line, sizeof(line), stdin)) {
+        printf("\nGoodbye!\n");
+        return 0;
+    }
+
+    if (!strchr(line, '\n')) {
+        int ch;
+        while ((ch = getchar()) != '\n' && ch != EOF);
+    }
+
+    printf("\n");
+
+    if (line[0] == '\0' || line[0] == '\n') {
+        printf("Goodbye!\n");
+        return 0;
+    }
+
+    if (line[0] == 'v' || line[0] == 'V') {
         vuln_path();
     }
 

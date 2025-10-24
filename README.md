@@ -7,7 +7,7 @@ A Linux CTF challenge featuring double AES-256-CBC encryption, Yahtzee-based key
 This challenge consists of two binaries:
 
 1. **menu** - The main interface with Yahtzee game, key generation, and decryption
-2. **final_bin** - A hidden binary (encrypted) that contains a prank and a vulnerable path for exploitation
+2. **vulnerable** - A hidden binary (encrypted) that contains a prank and a vulnerable path for exploitation
 
 ## Build Instructions
 
@@ -16,7 +16,7 @@ make all
 ```
 
 This will:
-- Compile `final_bin` with PIE, partial RELRO, stack canary, and NX
+- Compile `vulnerable` with PIE, partial RELRO, stack canary, and NX
 - Base64 encode the binary
 - Double-encrypt it with K1 (weak pattern key) then K2 (Yahtzee-derived key)
 - Generate `obf_k2.h` with obfuscated K2
@@ -32,7 +32,7 @@ Both binaries are compiled with:
 - **Stripped**: Yes
 
 ```bash
-checksec menu final_bin
+checksec menu vulnerable
 ```
 
 ## Crypto Pipeline
@@ -40,13 +40,13 @@ checksec menu final_bin
 ### Encryption (Build Time)
 
 ```
-final_bin → Base64 → AES-256-CBC(K1) → AES-256-CBC(K2) → ciphertext
+vulnerable → Base64 → AES-256-CBC(K1) → AES-256-CBC(K2) → ciphertext
 ```
 
 ### Decryption (Runtime)
 
 ```
-ciphertext → Decrypt(K2) → Decrypt(K1) → Base64 decode → final_bin
+ciphertext → Decrypt(K2) → Decrypt(K1) → Base64 decode → vulnerable
 ```
 
 - **Algorithm**: AES-256-CBC
@@ -109,7 +109,7 @@ When K2 matches the target, you'll see:
 1) Play game (Yahtzee)        - Roll dice, sorted descending, derive K2
 2) Cheat (manual dice)        - Enter exact dice values (no sorting)
 3) Generate a Key             - Generate weak K1
-4) Decrypt final binary       - Decrypt and auto-exec final_bin
+4) Decrypt final binary       - Decrypt and emit vulnerable binary
 5) Exit
 ```
 
@@ -125,7 +125,6 @@ The menu includes protection checks (before K2 unlock or decrypt success):
 
 - `CTF_ALLOW_DEBUG=1` - Disable anti-debug checks
 - `CTF_SHOW_REAL_K2=1` - Print real K2 hex instead of decoy
-- `CTF_NO_AUTOEXEC=1` - Don't auto-exec final_bin after decrypt
 
 ## Solution Path
 
@@ -148,18 +147,18 @@ Or extract from `obf_k2.h` and reverse the obfuscation.
 # Note the generated K1 (or use the build-time K1)
 ```
 
-### Step 3: Decrypt final_bin
+### Step 3: Decrypt vulnerable
 
 ```bash
 # Choose option 4
-# Enter K2: 4d387f7065e6224dc3c739bc0dfcb7caaab7bb49fd77ad52ff247b27356b2760
 # Enter K1: (press Enter to use generated, or paste the build K1)
-# The menu will decrypt and auto-exec final_bin
+# Enter K2: 4d387f7065e6224dc3c739bc0dfcb7caaab7bb49fd77ad52ff247b27356b2760
+# The menu will decrypt the ciphertext and write ./vulnerable
 ```
 
-### Step 4: Exploit final_bin
+### Step 4: Exploit vulnerable
 
-The `final_bin` will:
+Run `./vulnerable` to trigger the prank stage. The binary will:
 1. Print a fake "rm -rf /" prank (harmless)
 2. Offer a vulnerable path (press 'v')
 
@@ -215,7 +214,7 @@ make all
 echo -e "2\n5 4 3 2 1\n5" | ./menu
 
 # Verify protections
-checksec menu final_bin
+checksec menu vulnerable
 ```
 
 ## Clean Up
@@ -229,7 +228,7 @@ make clean
 - The "rm -rf /" prank is **print-only** - no files are harmed
 - Option 1 (Play) sorts dice, so hitting `[5,4,3,2,1]` by luck is ~1/7776
 - Option 2 (Cheat) with `5 4 3 2 1` always recovers the target K2
-- The final_bin exploit requires leaking addresses due to PIE
+- The vulnerable binary exploit requires leaking addresses due to PIE
 - Stack canary adds an extra challenge - may need a canary leak or brute force
 
 ## Author

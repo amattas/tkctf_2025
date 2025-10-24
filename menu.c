@@ -8,7 +8,9 @@
 #include <sys/ptrace.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <openssl/sha.h>
+#include <errno.h>
+#include <signal.h>
+#include <openssl/evp.h>
 #include "b64.h"
 #include "aes_wrap.h"
 #include "obf_k2.h"
@@ -17,19 +19,95 @@
 extern const unsigned char ciphertext[];
 extern const size_t ciphertext_len;
 
-// Static K2 for verification (injected at compile time)
-#ifndef STATIC_K2_HEX
-#define STATIC_K2_HEX "4d387f7065e6224dc3c739bc0dfcb7caaab7bb49fd77ad52ff247b27356b2760"
-#endif
-
-static uint8_t STATIC_K2[32];
 static uint8_t generated_k1[32];
 static int k1_generated = 0;
 static int k2_unlocked = 0;
 static int decrypt_success = 0;
 
+static volatile sig_atomic_t interrupted = 0;
+
 // Zero IV
 static const uint8_t IV[16] = {0};
+static const char TARGET_PHRASE[] = "CASINO ROYALE!";
+static const uint8_t TARGET_PHRASE_HASH[32] = {
+    0x3c, 0xb0, 0x35, 0x5a, 0xc8, 0xaf, 0xc9, 0x63,
+    0x87, 0xc9, 0x1b, 0x5f, 0xd2, 0x51, 0xd3, 0x06,
+    0x5b, 0x29, 0xcc, 0x97, 0x33, 0x4c, 0xf1, 0x12,
+    0x37, 0x52, 0x9f, 0x56, 0x5f, 0x93, 0x78, 0x7d
+};
+
+static void handle_sigint(int sig) {
+    (void)sig;
+    interrupted = 1;
+}
+
+static int read_line(char *buf, size_t size) {
+    while (1) {
+        if (interrupted) return 0;
+        if (fgets(buf, size, stdin)) {
+            size_t len = strcspn(buf, "\n");
+            if (buf[len] == '\n') {
+                buf[len] = '\0';
+            } else {
+                int ch;
+                while ((ch = getchar()) != '\n' && ch != EOF);
+                buf[size - 1] = '\0';
+            }
+            return 1;
+        }
+        if (feof(stdin)) return 0;
+        if (ferror(stdin)) {
+            if (errno == EINTR) {
+                clearerr(stdin);
+                if (interrupted) return 0;
+                continue;
+            }
+            return 0;
+        }
+        return 0;
+    }
+}
+
+static uint8_t dice_transform_byte(uint8_t value, const uint8_t d[5]) {
+    value = (uint8_t)((value + d[0]) & 0xFF);
+    value = (uint8_t)(value ^ d[1]);
+    value = (uint8_t)((value - d[2]) & 0xFF);
+    value = (uint8_t)(value ^ d[3]);
+    value = (uint8_t)((value + d[4]) & 0xFF);
+    return value;
+}
+
+static void dice_transform_buffer(const uint8_t d[5], const uint8_t *src, size_t len, uint8_t *dst) {
+    for (size_t i = 0; i < len; i++) {
+        dst[i] = dice_transform_byte(src[i], d);
+    }
+}
+
+static void sha256_digest(const void *chunks[], const size_t lens[], size_t count, uint8_t out[32]) {
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        fprintf(stderr, "SHA256 context allocation failed\n");
+        exit(1);
+    }
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
+        fprintf(stderr, "SHA256 init failed\n");
+        EVP_MD_CTX_free(ctx);
+        exit(1);
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (EVP_DigestUpdate(ctx, chunks[i], lens[i]) != 1) {
+            fprintf(stderr, "SHA256 update failed\n");
+            EVP_MD_CTX_free(ctx);
+            exit(1);
+        }
+    }
+    if (EVP_DigestFinal_ex(ctx, out, NULL) != 1) {
+        fprintf(stderr, "SHA256 final failed\n");
+        EVP_MD_CTX_free(ctx);
+        exit(1);
+    }
+    EVP_MD_CTX_free(ctx);
+}
 
 // Parse hex string to bytes
 static int hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
@@ -54,11 +132,9 @@ static void k2_verifier(const uint8_t k2[32], char out[9]) {
     uint8_t digest[32];
     const char *tag = "yahtzee-tag";
 
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    SHA256_Update(&ctx, k2, 32);
-    SHA256_Update(&ctx, tag, 11);
-    SHA256_Final(digest, &ctx);
+    const void *chunks[] = {k2, tag};
+    const size_t lens[] = {32, 11};
+    sha256_digest(chunks, lens, 2, digest);
 
     static const char *hex = "0123456789abcdef";
     for (int i = 0; i < 4; i++) {
@@ -70,47 +146,81 @@ static void k2_verifier(const uint8_t k2[32], char out[9]) {
 
 // De-obfuscate K2 from dice
 static void unveil_k2_from_dice(const uint8_t d[5], uint8_t k2[32]) {
-    for (int i = 0; i < 32; i++) {
-        uint8_t k = OBF_K2[i];
-        k = (uint8_t)((k + d[0]) & 0xFF);
-        k = (uint8_t)(k ^ d[1]);
-        k = (uint8_t)((k - d[2]) & 0xFF);
-        k = (uint8_t)(k ^ d[3]);
-        k = (uint8_t)((k + d[4]) & 0xFF);
-        k2[i] = k;
+    dice_transform_buffer(d, OBF_K2, 32, k2);
+}
+
+// Hash phrase after dice manipulation for validation
+static void dice_phrase_digest(const uint8_t d[5], uint8_t out[32]) {
+    uint8_t transformed[sizeof(TARGET_PHRASE) - 1];
+    dice_transform_buffer(d, (const uint8_t *)TARGET_PHRASE, sizeof(transformed), transformed);
+    const void *chunks[] = {transformed};
+    const size_t lens[] = {sizeof(transformed)};
+    sha256_digest(chunks, lens, 1, out);
+}
+
+static void report_k2_result(const uint8_t dice[5], const uint8_t k2[32], const char *failure_msg) {
+    char verif[9];
+    k2_verifier(k2, verif);
+    printf("K2 Verifier: %s\n", verif);
+
+    uint8_t phrase_hash[32];
+    dice_phrase_digest(dice, phrase_hash);
+    const int match = (memcmp(phrase_hash, TARGET_PHRASE_HASH, 32) == 0);
+
+    if (match) {
+        printf("\nCongratulations your key is: ");
+        print_hex(k2, 32);
+        printf("\n");
+        k2_unlocked = 1;
+    } else {
+        printf("\n[debug] Derived K2 (hex): ");
+        print_hex(k2, 32);
+        printf("\n");
+        printf("\n%s\n", failure_msg);
     }
+
+    printf("\n");
 }
 
 // Check anti-debug/anti-VM
 static int check_security(void) {
+    static int security_cleared = 0;
+    static int ptrace_primed = 0;
+
     if (k2_unlocked || decrypt_success) return 1;
+    if (getenv("CTF_ALLOW_DEBUG")) return 1;
+    if (security_cleared) return 1;
 
-    // Check ptrace
-    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
-        fprintf(stderr, "[!] Debugger detected (ptrace)\n");
-        return 0;
-    }
-    ptrace(PTRACE_DETACH, 0, NULL, NULL);
-
-    // Check TracerPid
-    FILE *f = fopen("/proc/self/status", "r");
-    if (f) {
-        char line[256];
-        while (fgets(line, sizeof(line), f)) {
-            if (strncmp(line, "TracerPid:", 10) == 0) {
-                int pid;
-                if (sscanf(line + 10, "%d", &pid) == 1 && pid != 0) {
-                    fclose(f);
-                    fprintf(stderr, "[!] Debugger detected (TracerPid)\n");
-                    return 0;
+    if (!ptrace_primed) {
+        FILE *f = fopen("/proc/self/status", "r");
+        if (f) {
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                if (strncmp(line, "TracerPid:", 10) == 0) {
+                    int pid = 0;
+                    if (sscanf(line + 10, "%d", &pid) == 1 && pid != 0) {
+                        fclose(f);
+                        fprintf(stderr, "[!] Debugger detected (TracerPid)\n");
+                        return 0;
+                    }
+                    break;
                 }
-                break;
             }
+            fclose(f);
         }
-        fclose(f);
+
+        errno = 0;
+        if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
+            if (errno == EPERM || errno == EBUSY || errno == EINVAL) {
+                fprintf(stderr, "[!] Debugger detected (ptrace)\n");
+                return 0;
+            }
+        } else {
+            ptrace_primed = 1;
+            ptrace(PTRACE_DETACH, 0, NULL, NULL);
+        }
     }
 
-    // Check LD_PRELOAD, LD_AUDIT, LD_DEBUG
     const char *ld_vars[] = {"LD_PRELOAD", "LD_AUDIT", "LD_DEBUG", NULL};
     for (int i = 0; ld_vars[i]; i++) {
         if (getenv(ld_vars[i])) {
@@ -119,7 +229,6 @@ static int check_security(void) {
         }
     }
 
-    // Simple VM check (DMI)
     const char *dmi_files[] = {
         "/sys/class/dmi/id/product_name",
         "/sys/class/dmi/id/sys_vendor",
@@ -144,6 +253,7 @@ static int check_security(void) {
         }
     }
 
+    security_cleared = 1;
     return 1;
 }
 
@@ -184,33 +294,7 @@ static void play_yahtzee(void) {
     // Derive K2
     uint8_t k2[32];
     unveil_k2_from_dice(dice, k2);
-
-    // Print decoy (unless CTF_SHOW_REAL_K2 is set)
-    if (getenv("CTF_SHOW_REAL_K2")) {
-        printf("\nDerived K2 (hex): ");
-        print_hex(k2, 32);
-        printf("\n");
-    } else {
-        // Print obfuscated decoy
-        printf("\nDerived K2 (obfuscated): ");
-        for (int i = 0; i < 64; i++) {
-            putchar(0x20 + (i % (0x7F - 0x20)));
-        }
-        printf("\n");
-    }
-
-    // Print verifier
-    char verif[9];
-    k2_verifier(k2, verif);
-    printf("K2 Verifier: %s\n", verif);
-
-    // Check if matches target
-    if (memcmp(k2, STATIC_K2, 32) == 0) {
-        printf("\n[K2 MATCH] You hit the Yahtzee target key!\n");
-        k2_unlocked = 1;
-    }
-
-    printf("\n");
+    report_k2_result(dice, k2, "Sorry try again!");
 }
 
 // Cheat mode - manual dice entry (no sorting)
@@ -223,20 +307,38 @@ static void cheat_mode(void) {
     printf("\n=== Cheat Mode ===\n");
     printf("Enter 5 dice values (space separated, 1-6): ");
 
-    uint8_t dice[5];
-    if (scanf("%hhu %hhu %hhu %hhu %hhu", &dice[0], &dice[1], &dice[2], &dice[3], &dice[4]) != 5) {
-        printf("Invalid input.\n");
-        while (getchar() != '\n');
+    char line[128];
+    if (!read_line(line, sizeof(line))) {
+        printf("\nInput aborted.\n");
         return;
     }
-    while (getchar() != '\n');
 
-    // Validate
-    for (int i = 0; i < 5; i++) {
-        if (dice[i] < 1 || dice[i] > 6) {
+    uint8_t dice[5];
+    int count = 0;
+    char *saveptr = NULL;
+    for (char *token = strtok_r(line, " \t", &saveptr);
+         token;
+         token = strtok_r(NULL, " \t", &saveptr)) {
+        if (count >= 5) {
+            printf("Need exactly 5 dice values.\n");
+            return;
+        }
+        char *endptr = NULL;
+        unsigned long val = strtoul(token, &endptr, 10);
+        if (endptr == token || *endptr != '\0') {
+            printf("Dice values must be integers.\n");
+            return;
+        }
+        if (val < 1 || val > 6) {
             printf("Dice values must be 1-6.\n");
             return;
         }
+        dice[count++] = (uint8_t)val;
+    }
+
+    if (count != 5) {
+        printf("Need exactly 5 dice values.\n");
+        return;
     }
 
     printf("Entered dice: ");
@@ -246,32 +348,7 @@ static void cheat_mode(void) {
     // Derive K2 (no sorting in cheat mode!)
     uint8_t k2[32];
     unveil_k2_from_dice(dice, k2);
-
-    // Print decoy or real
-    if (getenv("CTF_SHOW_REAL_K2")) {
-        printf("\nDerived K2 (hex): ");
-        print_hex(k2, 32);
-        printf("\n");
-    } else {
-        printf("\nDerived K2 (obfuscated): ");
-        for (int i = 0; i < 64; i++) {
-            putchar(0x20 + (i % (0x7F - 0x20)));
-        }
-        printf("\n");
-    }
-
-    // Print verifier
-    char verif[9];
-    k2_verifier(k2, verif);
-    printf("K2 Verifier: %s\n", verif);
-
-    // Check if matches target
-    if (memcmp(k2, STATIC_K2, 32) == 0) {
-        printf("\n[K2 MATCH] You hit the Yahtzee target key!\n");
-        k2_unlocked = 1;
-    }
-
-    printf("\n");
+    report_k2_result(dice, k2, "Cheaters never prosper!");
 }
 
 // Generate weak K1
@@ -304,52 +381,34 @@ static void generate_k1(void) {
 static void decrypt_and_exec(void) {
     printf("\n=== Decrypt Final Binary ===\n");
 
-    // Get K2
-    char k2_hex[65];
-    printf("Enter K2 (64 hex chars): ");
-    if (scanf("%64s", k2_hex) != 1) {
-        printf("Invalid input.\n");
-        while (getchar() != '\n');
+    printf("Enter K1 (64 hex chars");
+    if (k1_generated) printf(", or press Enter to use generated");
+    printf("): ");
+
+    char k1_hex[128];
+    if (!read_line(k1_hex, sizeof(k1_hex))) {
+        printf("\nInput aborted.\n");
         return;
     }
-    while (getchar() != '\n');
+
+    if (!(k1_generated && k1_hex[0] == '\0') &&
+        (!hex_to_bytes(k1_hex, generated_k1, 32) || strlen(k1_hex) != 64)) {
+        printf("Invalid K1 hex string.\n");
+        return;
+    }
+    k1_generated = 1;
+
+    printf("Enter K2 (64 hex chars): ");
+    char k2_hex[128];
+    if (!read_line(k2_hex, sizeof(k2_hex))) {
+        printf("\nInput aborted.\n");
+        return;
+    }
 
     uint8_t k2[32];
-    if (!hex_to_bytes(k2_hex, k2, 32)) {
+    if (strlen(k2_hex) != 64 || !hex_to_bytes(k2_hex, k2, 32)) {
         printf("Invalid K2 hex string.\n");
         return;
-    }
-
-    // Get K1
-    char k1_hex[65];
-    if (k1_generated) {
-        printf("Enter K1 (64 hex chars, or press Enter to use generated): ");
-        if (fgets(k1_hex, sizeof(k1_hex), stdin) == NULL) {
-            printf("Read error.\n");
-            return;
-        }
-        if (k1_hex[0] == '\n') {
-            // Use generated K1
-            memcpy(k1_hex, generated_k1, 32);
-        } else {
-            k1_hex[strcspn(k1_hex, "\n")] = 0;
-            if (!hex_to_bytes(k1_hex, generated_k1, 32)) {
-                printf("Invalid K1 hex string.\n");
-                return;
-            }
-        }
-    } else {
-        printf("Enter K1 (64 hex chars): ");
-        if (scanf("%64s", k1_hex) != 1) {
-            printf("Invalid input.\n");
-            while (getchar() != '\n');
-            return;
-        }
-        while (getchar() != '\n');
-        if (!hex_to_bytes(k1_hex, generated_k1, 32)) {
-            printf("Invalid K1 hex string.\n");
-            return;
-        }
     }
 
     printf("\nDecrypting...\n");
@@ -358,7 +417,7 @@ static void decrypt_and_exec(void) {
     size_t stage1_len;
     unsigned char *stage1 = aes_decrypt(ciphertext, ciphertext_len, k2, IV, &stage1_len);
     if (!stage1) {
-        printf("Decryption failed (K2 stage).\n");
+        printf("Decryption failed (K2 stage: wrong K2 or corrupt ciphertext).\n");
         return;
     }
 
@@ -367,92 +426,114 @@ static void decrypt_and_exec(void) {
     unsigned char *stage2 = aes_decrypt(stage1, stage1_len, generated_k1, IV, &stage2_len);
     free(stage1);
     if (!stage2) {
-        printf("Decryption failed (K1 stage).\n");
+        printf("Decryption failed (K1 stage: wrong K1).\n");
         return;
     }
 
     // Base64 decode
     size_t final_len;
-    unsigned char *final_bin = b64_decode((char*)stage2, stage2_len, &final_len);
+    unsigned char *vulnerable_blob = b64_decode((char*)stage2, stage2_len, &final_len);
     free(stage2);
-    if (!final_bin) {
-        printf("Base64 decode failed.\n");
+    if (!vulnerable_blob) {
+        printf("Decryption failed (K1 stage: invalid payload after K1 decrypt).\n");
         return;
     }
 
-    printf("Decryption successful! Writing ./final_bin...\n");
+    printf("Decryption successful! Writing ./vulnerable...\n");
 
     // Write to file
-    FILE *out = fopen("./final_bin", "wb");
+    FILE *out = fopen("./vulnerable", "wb");
     if (!out) {
         perror("fopen");
-        free(final_bin);
+        free(vulnerable_blob);
         return;
     }
-    fwrite(final_bin, 1, final_len, out);
+    fwrite(vulnerable_blob, 1, final_len, out);
     fclose(out);
-    free(final_bin);
+    free(vulnerable_blob);
 
     // Make executable
-    chmod("./final_bin", 0755);
+    chmod("./vulnerable", 0755);
 
-    printf("Wrote ./final_bin (%zu bytes)\n", final_len);
+    printf("Wrote ./vulnerable (%zu bytes)\n", final_len);
+    printf("Launch ./vulnerable manually to continue the challenge.\n");
     decrypt_success = 1;
-
-    // Auto-exec unless CTF_NO_AUTOEXEC
-    if (!getenv("CTF_NO_AUTOEXEC")) {
-        printf("\nExecuting ./final_bin...\n\n");
-        setenv("ALLOW_DEBUG", "1", 1);
-        execl("./final_bin", "./final_bin", NULL);
-        perror("execl");
-    } else {
-        printf("Auto-exec disabled. Run ./final_bin manually.\n");
-    }
+    printf("\n");
 }
 
 int main(void) {
     srand(time(NULL));
 
-    // Parse static K2
-    if (!hex_to_bytes(STATIC_K2_HEX, STATIC_K2, 32)) {
-        fprintf(stderr, "Failed to parse STATIC_K2_HEX\n");
-        return 1;
-    }
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
 
     printf("╔═══════════════════════════════════════╗\n");
     printf("║     Play to Earn - Yahtzee CTF        ║\n");
     printf("╚═══════════════════════════════════════╝\n\n");
 
+    int last_choice = -1;
+
     while (1) {
+        if (interrupted) {
+            printf("\nGoodbye!\n");
+            return 0;
+        }
         printf("1) Play game (Yahtzee)\n");
         printf("2) Cheat (manual dice)\n");
         printf("3) Generate a Key\n");
         printf("4) Decrypt final binary\n");
         printf("5) Exit\n");
         printf("\nChoice: ");
+        fflush(stdout);
 
-        int choice;
-        if (scanf("%d", &choice) != 1) {
-            printf("Invalid input.\n");
-            while (getchar() != '\n');
-            continue;
+        char line[32];
+        if (!read_line(line, sizeof(line))) {
+            printf("\nGoodbye!\n");
+            return 0;
         }
-        while (getchar() != '\n');
+
+        int choice = -1;
+
+        if (line[0] == '\0') {
+            printf("\n");
+            if (last_choice == -1) {
+                printf("No previous selection to repeat.\n");
+                continue;
+            }
+            printf("(Repeating choice %d)\n", last_choice);
+            choice = last_choice;
+        } else {
+            char *endptr = NULL;
+            long parsed = strtol(line, &endptr, 10);
+            if (*endptr != '\0' || parsed < 1 || parsed > 5) {
+                printf("Invalid input.\n");
+                continue;
+            }
+            choice = (int)parsed;
+        }
 
         switch (choice) {
             case 1:
                 play_yahtzee();
+                last_choice = 1;
                 break;
             case 2:
                 cheat_mode();
+                last_choice = 2;
                 break;
             case 3:
                 generate_k1();
+                last_choice = 3;
                 break;
             case 4:
                 decrypt_and_exec();
+                last_choice = 4;
                 break;
             case 5:
+                last_choice = 5;
                 printf("Goodbye!\n");
                 return 0;
             default:

@@ -21,17 +21,17 @@ tools/gen_obf_k2: tools/gen_obf_k2.c
 obf_k2.h: tools/gen_obf_k2
 	./tools/gen_obf_k2 $(K2_HEX) $(TARGET_DICE) > $@
 
-# Build final_bin (stripped)
-final_bin: final_prank.c
+# Build vulnerable binary (stripped)
+vulnerable: final_prank.c
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $^
 	$(STRIP) $@
 
-# Base64 encode final_bin
-final_bin.b64: final_bin
+# Base64 encode vulnerable
+vulnerable.b64: vulnerable
 	base64 $< > $@
 
 # Double-encrypt: K1 then K2
-ciphertext.bin: final_bin.b64
+ciphertext.bin: vulnerable.b64
 	openssl enc -aes-256-cbc -K $(K1_HEX) -iv $(IV0_HEX) -nosalt -in $< -out $@.stage1
 	openssl enc -aes-256-cbc -K $(K2_HEX) -iv $(IV0_HEX) -nosalt -in $@.stage1 -out $@
 	rm -f $@.stage1
@@ -50,7 +50,7 @@ challenge: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ menu.c ciphertext.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
 	@echo "Cleaning up intermediate files..."
-	@rm -f final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h
+	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h
 
 clean:
-	rm -f challenge final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
+	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2

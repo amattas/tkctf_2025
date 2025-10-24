@@ -57,7 +57,7 @@ Follow the crypto pipeline and per-byte K2 obfuscation precisely.
 ### Encrypt (build time)
 
 ```
-final_bin
+vulnerable
  → Base64 encode
    → AES-256-CBC with K1
      → AES-256-CBC with K2
@@ -71,7 +71,7 @@ ciphertext
  → Decrypt with K2
    → Decrypt with K1
      → Base64 decode
-       → write ./final_bin (+x)
+       → write ./vulnerable (+x)
 ```
 
 Padding: PKCS#7 (default). Use OpenSSL EVP in code; `openssl enc` in Makefile.
@@ -162,9 +162,8 @@ Correct dice (or correct Cheat input `54321`) → correct K2.
 
 ### Decrypt (Option 4)
 
-* Prompt for K2 hex then K1 hex (allow Enter to accept generated K1).
-* Decrypt embedded `ciphertext[]` (K2→K1), Base64-decode, write `./final_bin`, `chmod +x`, and **auto-exec** the child unless `CTF_NO_AUTOEXEC=1`.
-* Set child env (e.g., `ALLOW_DEBUG=1`) so stage-1 anti-debug doesn’t apply to `final_bin`.
+* Prompt for K1 hex (allow Enter to accept generated K1) followed by K2 hex.
+* Decrypt embedded `ciphertext[]` (K2→K1), Base64-decode, write `./vulnerable`, and `chmod +x` the result. Execution is left to the player.
 
 ### Anti-debug / Anti-VM (menu only, until K2 success or decrypt success)
 
@@ -178,12 +177,11 @@ Correct dice (or correct Cheat input `54321`) → correct K2.
 * Hidden env overrides:
 
   * `CTF_ALLOW_DEBUG=1` (disable checks)
-  * `CTF_NO_AUTOEXEC=1` (don’t exec child)
   * `CTF_SHOW_REAL_K2=1` (print real K2)
 
 ---
 
-## Final binary (`final_bin`)
+## Final binary (`vulnerable`)
 
 ### Prank in `main()`
 
@@ -230,10 +228,10 @@ obf_k2.h: tools/gen_obf_k2
 **Ciphertext pipeline (unchanged):**
 
 ```make
-final_bin.b64: final_bin
+vulnerable.b64: vulnerable
 	@base64 $< > $@
 
-ciphertext.bin: final_bin.b64
+ciphertext.bin: vulnerable.b64
 	@openssl enc -aes-256-cbc -K $(K1_HEX) -iv $(IV0_HEX) -nosalt -in $< -out $@.stage1
 	@openssl enc -aes-256-cbc -K $(K2_HEX) -iv $(IV0_HEX) -nosalt -in $@.stage1 -out $@
 	@rm -f $@.stage1
@@ -247,7 +245,7 @@ ciphertext.c: ciphertext.bin
 **Build binaries (PIE on):**
 
 ```make
-final_bin: final_prank.c
+vulnerable: final_prank.c
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $^
 	$(STRIP) $@
 
@@ -255,10 +253,10 @@ menu: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ menu.c b64.c aes_wrap.c ciphertext.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
 
-all: final_bin ciphertext.c obf_k2.h menu
+all: vulnerable ciphertext.c obf_k2.h menu
 
 clean:
-	rm -f menu final_bin final_bin.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
+	rm -f menu vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
 ```
 
 **`tools/gen_obf_k2.c` (per-byte inverse)**
@@ -349,10 +347,10 @@ static void k2_verifier(const uint8_t k2[32], char out8[9]) {
 
 ## Acceptance checklist
 
-* `make all` builds `menu`, `final_bin`, and generates `ciphertext.c` + `obf_k2.h`.
-* `checksec menu final_bin` → Canary ✓, NX ✓, **PIE ✓**, RELRO **Partial**.
-* `./menu` → Cheat with `5 4 3 2 1` recovers correct K2 and decrypts `final_bin`.
-* `final_bin` prints prank and includes a **single info leak** pathway to support PIE exploitation.
+* `make all` builds `menu`, `vulnerable`, and generates `ciphertext.c` + `obf_k2.h`.
+* `checksec menu vulnerable` → Canary ✓, NX ✓, **PIE ✓**, RELRO **Partial**.
+* `./menu` → Cheat with `5 4 3 2 1` recovers correct K2 and decrypts `vulnerable`.
+* `vulnerable` prints prank and includes a **single info leak** pathway to support PIE exploitation.
 * Gadget scan shows intentionally limited set; exploitation is leak→chain as intended.
 
 ---
