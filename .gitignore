@@ -1,18 +1,31 @@
-# Generated binaries
+# Production binaries
 challenge
-final_bin
-final_bin.b64
+vulnerable
 
-# Generated C files
-ciphertext.c
+# Debug binaries
+challenge_debug
+vulnerable_debug
+
+# Intermediate build files
+vulnerable.b64
 ciphertext.bin
+ciphertext.c
+ciphertext_debug.c
 obf_k2.h
+flag_consts.h
 
-# Build artifacts
+# Build tools
 tools/gen_obf_k2
+tools/gen_flag_consts
+
+# Object files
 *.o
 *.a
 *.so
+
+# Old artifacts (legacy)
+final_bin
+final_bin.b64
 
 # Editor files
 *.swp
