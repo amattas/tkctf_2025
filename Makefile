@@ -21,9 +21,19 @@ tools/gen_obf_k2: tools/gen_obf_k2.c
 obf_k2.h: tools/gen_obf_k2
 	./tools/gen_obf_k2 $(K2_HEX) $(TARGET_DICE) > $@
 
-# Build vulnerable binary (stripped)
-vulnerable: final_prank.c
-	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $^
+# Build flag constants generator
+tools/gen_flag_consts: tools/gen_flag_consts.c
+	$(CC) -O2 -o $@ $< -lcrypto
+
+# Generate flag constants
+FLAG ?= flag{s!x-s3v3n}
+flag_consts.h: tools/gen_flag_consts
+	@echo "Generating flag constants (this will take 1-2 minutes)..."
+	./tools/gen_flag_consts "$(FLAG)" $@
+
+# Build vulnerable binary (stripped, with flag reveal)
+vulnerable: vulnerable.c flag_consts.h
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -DFLAG_REVEAL_ENABLED -o $@ $< -lcrypto
 	$(STRIP) $@
 
 # Base64 encode vulnerable
@@ -36,9 +46,10 @@ ciphertext.bin: vulnerable.b64
 	openssl enc -aes-256-cbc -K $(K2_HEX) -iv $(IV0_HEX) -nosalt -in $@.stage1 -out $@
 	rm -f $@.stage1
 
-# Convert ciphertext to C array
+# Convert ciphertext to C array (in custom .uh_oh section)
 ciphertext.c: ciphertext.bin
 	echo '#include <stddef.h>' > $@
+	echo '__attribute__((section(".uh_oh")))' >> $@
 	echo 'const unsigned char ciphertext[] = {' >> $@
 	python3 tools/bin2c.py < $< | sed 's/^/  /' >> $@
 	echo '' >> $@
@@ -46,11 +57,11 @@ ciphertext.c: ciphertext.bin
 	echo 'const size_t ciphertext_len = sizeof(ciphertext);' >> $@
 
 # Build challenge (with all dependencies)
-challenge: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
-	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ menu.c ciphertext.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
+challenge: challenge.c ciphertext.c b64.c aes_wrap.c obf_k2.h
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ challenge.c ciphertext.c b64.c aes_wrap.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
 	@echo "Cleaning up intermediate files..."
-	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h
+	@rm -f vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h
 
 clean:
-	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
+	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h flag_consts.h tools/gen_obf_k2 tools/gen_flag_consts

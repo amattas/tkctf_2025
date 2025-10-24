@@ -18,8 +18,8 @@ Follow the crypto pipeline and per-byte K2 obfuscation precisely.
 .
 ├── README.md
 ├── Makefile
-├── menu.c
-├── final_prank.c
+├── challenge.c
+├── vulnerable.c
 ├── b64.c
 ├── b64.h
 ├── aes_wrap.c
@@ -46,7 +46,7 @@ Follow the crypto pipeline and per-byte K2 obfuscation precisely.
 | Gadget minimization | `-O2 -ffunction-sections -fdata-sections -Wl,--gc-sections` |
 | Warnings            | `-Wall -Wextra`                                             |
 
-**Note on PIE:** With PIE + ASLR, exploitation requires an **info leak** (e.g., a `puts(GOT)` pattern) to recover a base and compute gadget addresses. Include a small, intentional leak in `final_prank.c`’s vulnerable path so the challenge is hard-but-fair.
+**Note on PIE:** With PIE + ASLR, exploitation requires an **info leak** (e.g., a `puts(GOT)` pattern) to recover a base and compute gadget addresses. Include a small, intentional leak in `vulnerable.c`'s vulnerable path so the challenge is hard-but-fair.
 
 ---
 
@@ -245,18 +245,18 @@ ciphertext.c: ciphertext.bin
 **Build binaries (PIE on):**
 
 ```make
-vulnerable: final_prank.c
+vulnerable: vulnerable.c
 	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $^
 	$(STRIP) $@
 
-menu: menu.c ciphertext.c b64.c aes_wrap.c obf_k2.h
-	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ menu.c b64.c aes_wrap.c ciphertext.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
+challenge: challenge.c ciphertext.c b64.c aes_wrap.c obf_k2.h
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ challenge.c b64.c aes_wrap.c ciphertext.c -lcrypto -DSTATIC_K2_HEX=\"$(K2_HEX)\"
 	$(STRIP) $@
 
-all: vulnerable ciphertext.c obf_k2.h menu
+all: vulnerable ciphertext.c obf_k2.h challenge
 
 clean:
-	rm -f menu vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
+	rm -f challenge vulnerable vulnerable.b64 ciphertext.bin ciphertext.c obf_k2.h tools/gen_obf_k2
 ```
 
 **`tools/gen_obf_k2.c` (per-byte inverse)**
@@ -347,9 +347,9 @@ static void k2_verifier(const uint8_t k2[32], char out8[9]) {
 
 ## Acceptance checklist
 
-* `make all` builds `menu`, `vulnerable`, and generates `ciphertext.c` + `obf_k2.h`.
-* `checksec menu vulnerable` → Canary ✓, NX ✓, **PIE ✓**, RELRO **Partial**.
-* `./menu` → Cheat with `5 4 3 2 1` recovers correct K2 and decrypts `vulnerable`.
+* `make all` builds `challenge`, `vulnerable`, and generates `ciphertext.c` + `obf_k2.h`.
+* `checksec challenge vulnerable` → Canary ✓, NX ✓, **PIE ✓**, RELRO **Partial**.
+* `./challenge` → Cheat with `5 4 3 2 1` recovers correct K2 and decrypts `vulnerable`.
 * `vulnerable` prints prank and includes a **single info leak** pathway to support PIE exploitation.
 * Gadget scan shows intentionally limited set; exploitation is leak→chain as intended.
 

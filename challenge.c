@@ -226,30 +226,6 @@ static int check_security(void) {
         }
     }
 
-    const char *dmi_files[] = {
-        "/sys/class/dmi/id/product_name",
-        "/sys/class/dmi/id/sys_vendor",
-        NULL
-    };
-    const char *vm_strings[] = {"QEMU", "KVM", "VirtualBox", "VMware", NULL};
-
-    for (int i = 0; dmi_files[i]; i++) {
-        FILE *df = fopen(dmi_files[i], "r");
-        if (df) {
-            char buf[128];
-            if (fgets(buf, sizeof(buf), df)) {
-                for (int j = 0; vm_strings[j]; j++) {
-                    if (strstr(buf, vm_strings[j])) {
-                        fclose(df);
-                        fprintf(stderr, "[!] VM detected: %s\n", vm_strings[j]);
-                        return 0;
-                    }
-                }
-            }
-            fclose(df);
-        }
-    }
-
     security_cleared = 1;
     return 1;
 }
