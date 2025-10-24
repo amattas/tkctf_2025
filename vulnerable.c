@@ -367,6 +367,12 @@ static void fake_rm_walks(void) {
     }
 }
 
+struct format_frame {
+    char buf[64];
+    uintptr_t fmt_slots[32];
+    char terminator[8];
+};
+
 static void decode_prank_message(char *out, size_t out_len) {
     size_t limit = sizeof(enc_msg);
     if (out_len < limit) limit = out_len;
@@ -408,13 +414,29 @@ static void prank_sequence(void) {
     printf("But now... let's play a different game.\n\n");
 }
 
-// Vulnerable function with info leak
-static void __attribute__((noinline)) vuln_path(void) {
-    struct format_frame {
-        char buf[64];
-        uintptr_t fmt_slots[32];
-        char terminator[8];
-    } frame;
+// Vulnerable read function - no bounds checking (intentional buffer overflow!)
+// Broken out from the vuln_path() function to make it easy to return to in a
+// multi stage ROP attack
+static void __attribute__((noinline)) vuln_read(struct format_frame *frame) {
+    ssize_t n = read(0, frame->buf, 512);
+    if (n <= 0) {
+        printf("Input error or EOF.\n");
+        return;
+    }
+
+    // Refresh the trailing terminator so printf always has a natural stopping
+    // point even if the attacker chooses not to embed a NUL in their payload.
+    frame->terminator[sizeof(frame->terminator) - 1] = '\0';
+
+    // Format string vulnerability enables contestants to craft their own leaks
+    printf(frame->buf);
+    printf("\n");
+}
+
+
+// Start of vulnerable path function with info leak
+static void vuln_path(void) {
+    struct format_frame frame;
 
     // Prime the frame so format-string arguments start out zeroed and aligned
     // for pointer-sized writes. This keeps the scratch space predictable while
@@ -424,21 +446,7 @@ static void __attribute__((noinline)) vuln_path(void) {
     printf("You've unlocked the secret path!\n");
     printf("Enter your name: ");
     fflush(stdout);
-
-    // Vulnerable read - no bounds checking (intentional buffer overflow!)
-    ssize_t n = read(0, frame.buf, 512);
-    if (n <= 0) {
-        printf("Input error or EOF.\n");
-        return;
-    }
-
-    // Refresh the trailing terminator so printf always has a natural stopping
-    // point even if the attacker chooses not to embed a NUL in their payload.
-    frame.terminator[sizeof(frame.terminator) - 1] = '\0';
-
-    // Format string vulnerability enables contestants to craft their own leaks
-    printf(frame.buf);
-    printf("\n");
+    vuln_read(&frame);
 }
 
 extern void gadget_pop_rdi_ret_label(void);
